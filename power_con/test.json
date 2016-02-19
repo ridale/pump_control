@@ -1,0 +1,6 @@
+{"command":"config"}
+{"command":"status","pin":1}
+{"command":"toggle","pin":1}
+{"command":"toggle","pin":1}
+{"command":"status","pin":1}
+
