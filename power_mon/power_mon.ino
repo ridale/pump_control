@@ -1,7 +1,10 @@
 /**
  * This module uses RS485 and modbus to read the power data
  * from a SPM91 DIN rail single phase energy meter from
- * zhuhai pilot technology co. ltd.
+ * zhuhai pilot technology co. ltd. The following library is
+ * used for modbus 
+ * http://playground.arduino.cc/Code/ModbusMaster
+ * 
  * The final part of the puzzle will be to write that data to 
  * xbee module attached to the DFR0219 (dfrobot IO expander)
  * 
