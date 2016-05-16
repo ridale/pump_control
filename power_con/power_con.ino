@@ -16,7 +16,37 @@
  *
  */
 #include <ArduinoJson.h>
-#include "monitor.h"
+#include <ModbusMaster.h>
+
+// create 3 modbus objects for the power meters
+ModbusMaster node[3] = {ModbusMaster(1), ModbusMaster(2), ModbusMaster(3)};
+
+// Variables for the flow meter
+volatile int flow1;
+const int pinflow1 = 2;
+volatile int flow2;
+const int pinflow2 = 3;
+volatile int flow3;
+const int pinflow3 = 4;
+
+/**
+ * ISR for flow meter 2
+ */
+void accum1() {
+  flow1++;
+}
+/**
+ * ISR for flow meter 2
+ */
+void accum2() {
+  flow2++;
+}
+/**
+ * ISR for flow meter 3
+ */
+void accum3() {
+  flow3++;
+}
 
 typedef struct myPin {
   int pin;
@@ -36,6 +66,8 @@ pin_t pinPower[4] = { {2, 0, false},
                       {10, 0, false}
                     };
 
+const int flow[3] =  {11,12,13};
+
 // string to hold inputCommand
 String inputCommand = "";
 // the command has been read
@@ -43,25 +75,7 @@ bool commandComplete = false;
 // the delay between on/off in msecs
 const int PIN_DEADBAND = 5000;
 
-Monitor monitor(3,4,5);
-/**
- * ISR for flow meter 2
- */
-void accum1() {
-  monitor.flow1++;
-}
-/**
- * ISR for flow meter 2
- */
-void accum2() {
-  monitor.flow2++;
-}
-/**
- * ISR for flow meter 3
- */
-void accum3() {
-  monitor.flow3++;
-}
+unsigned long now = 0;
 
 /**
  * Init function run before loop started
@@ -69,25 +83,29 @@ void accum3() {
  * parameters
  */
 void setup() {
-  uint32_t now = millis();
-
+  now = millis();
+  // initialize modbus comms
+  node[0].begin(9600);
+  node[1].begin(9600);
+  node[2].begin(9600);
   // Starting the other serial ports
   Serial1.begin(9600); // zigbee port
-
+  //Serial.begin(9600);
   // setup the digital outputs
   for (int i = 0; i < sizeof(pinPower)/sizeof(pin_t); i++ ) {
     pinMode(pinPower[i].pin, OUTPUT);
     digitalWrite(pinPower[i].pin,LOW);
     pinPower[i].last_changed = now;
   }
-  // setup the digital inputs
-  pinMode(monitor.pinflow1, INPUT);
-  attachInterrupt(digitalPinToInterrupt(monitor.pinflow1), accum1, RISING);
-  pinMode(monitor.pinflow2, INPUT);
-  attachInterrupt(digitalPinToInterrupt(monitor.pinflow2), accum2, RISING);
-  pinMode(monitor.pinflow3, INPUT);
-  attachInterrupt(digitalPinToInterrupt(monitor.pinflow3), accum3, RISING);
-
+  //Serial2.begin(9600);
+  //Serial3.begin(9600);
+  // setup the flow rate pins
+  pinMode(pinflow1, INPUT);
+  attachInterrupt(digitalPinToInterrupt(pinflow1), accum1, RISING);
+  pinMode(pinflow2, INPUT);
+  attachInterrupt(digitalPinToInterrupt(pinflow2), accum2, RISING);
+  pinMode(pinflow3, INPUT);
+  attachInterrupt(digitalPinToInterrupt(pinflow3), accum3, RISING);
 }
 /**
  * The main run loop. I am using the serialEvent thingie
@@ -95,8 +113,9 @@ void setup() {
  * available, but it looks like voodoo to me.
  */
 void loop() {
-  // put your main code here, to run repeatedly:
+  // check got data on the serial line
   serialEvent1();
+  // if we have the json close } then process
   if (commandComplete) {
     commandRespond(inputCommand);
     // clear the string:
@@ -104,10 +123,19 @@ void loop() {
     commandComplete = false;
   }
 }
+
+bool notyet(unsigned long theNow) {
+  return ((theNow - now) > 300);
+}
+
 /**
  * Read the serial input waiting for a command
  */
 void serialEvent1() {
+  static uint32_t i;
+  unsigned long  theNow = millis();
+  String modbusString("");
+
   while (Serial1.available()) {
     char ch = (char) Serial1.read();
     inputCommand += ch;
@@ -116,10 +144,10 @@ void serialEvent1() {
     }
   }
   // if we have no command incoming we can write out our status...
-  if (inputCommand.length() == 0) {
-    monitor.index++;
-    monitor.doModbus();
-    monitor.doFlow();
+  if (inputCommand.length() == 0 && notyet(theNow)) {
+    doModbus(i);
+    doFlow();
+    i++;
   }
 }
 /**
@@ -132,14 +160,14 @@ void commandRespond(String command) {
   JsonObject& root = jsonBuffer.parseObject(command);
 
   if (!root.success()) {
-    Serial1.println("{");
+    Serial1.println("{\"type\":\"command\",");
     Serial1.println(" \"error\":\"Failed to parse JSON\"");
     Serial1.println("}");
     return;
   }
   const char* cmd = root["command"];
   if (NULL == cmd) {
-    Serial1.println("{");
+    Serial1.println("{\"type\":\"command\",");
     Serial1.println(" \"error\":\"Failed to find command\"");
     Serial1.println("}");
   }
@@ -167,7 +195,7 @@ void commandRespond(String command) {
     }
     else {
       // no idea what you want
-      Serial1.println("{");
+      Serial1.println("{\"type\":\"command\",");
       cmdVal = " \"error\":\"Unknown command " + cmdVal + "\"";
       Serial1.println(" \"error\":\"Failed to parse command\"");
       Serial1.println("}");
@@ -183,7 +211,7 @@ void returnStatus(uint8_t pinIndex) {
   uint32_t pins = sizeof(pinPower)/sizeof(pin_t);
   char buff[128];
 
-  Serial1.println("{");
+  Serial1.println("{\"type\":\"command\",");
   sprintf(buff, " \"pin\":%i,",pinIndex);
   Serial1.println(buff);
 
@@ -206,7 +234,7 @@ void returnConfig() {
   uint32_t pins = sizeof(pinPower)/sizeof(pin_t);
   char buff[128];
 
-  Serial1.println("{");
+  Serial1.println("{\"type\":\"command\",");
   sprintf(buff, " \"pin_count\":%i,",pins);
   Serial1.println(buff);
   sprintf(buff, " \"deadband_ms\":%i", PIN_DEADBAND);
@@ -238,7 +266,7 @@ void togglePower(uint8_t pinIndex) {
 
   uint32_t last_change = pinLastChanged(pinIndex);
   if (last_change < PIN_DEADBAND) {
-    Serial1.println("{");
+    Serial1.println("{\"type\":\"command\",");
     sprintf(buff, " \"pin\":%i,",pinIndex);
     Serial1.println(buff);
     // too quick we have a deadband
@@ -247,7 +275,7 @@ void togglePower(uint8_t pinIndex) {
     Serial1.println("}");
   }
   else if (pinIndex >= pins) {
-    Serial1.println("{");
+    Serial1.println("{\"type\":\"command\",");
     sprintf(buff, " \"pin\":%i,",pinIndex);
     Serial1.println(buff);
     Serial1.println(" \"error\":\"PIN out of bounds\"");
@@ -283,7 +311,7 @@ void turnOn(uint8_t pinIndex) {
     togglePower(pinIndex); // let them write our error
   }
   else if (true == pinPower[pinIndex].state) {
-    Serial1.println("{");
+    Serial1.println("{\"type\":\"command\",");
     sprintf(buff, " \"pin\":%i,",pinIndex);
     Serial1.println(buff);
     Serial1.println("  \"error\":\"Already switched ON\"");
@@ -305,7 +333,7 @@ void turnOff(uint8_t pinIndex) {
     togglePower(pinIndex); // let them write our error
   }
   else if (false == pinPower[pinIndex].state) {
-    Serial1.println("{");
+    Serial1.println("{\"type\":\"command\",");
     sprintf(buff, " \"pin\":%i,",pinIndex);
     Serial1.println(buff);
     Serial1.println("  \"error\":\"Already switched OFF\"");
@@ -316,3 +344,120 @@ void turnOff(uint8_t pinIndex) {
   }
 }
 
+/**
+ * The main flow meter function reads the hall pulses.
+ * Check this blog for information
+ * http://forum.arduino.cc/index.php?topic=8548.0
+ */
+void doFlow() {
+  char buff[128];
+  static uint32_t last_time;
+  uint32_t elapsed = 0;
+  int32_t tmp1,tmp2,tmp3;
+  // get interval
+  uint32_t now = millis();
+  if (now > last_time) {
+    elapsed = now - last_time;
+  }
+  else {
+    // overflow (cant find maxint #def)
+    elapsed = now + (UINT32_MAX - last_time);
+  }
+  last_time = now;
+  // disable interrupts
+  noInterrupts();
+  // get values & reset counters
+  tmp1 = flow1;
+  flow1 = 0;
+  tmp2 = flow2;
+  flow2 = 0;
+  tmp3 = flow3;
+  flow3 = 0;
+  // enable interrupts
+  interrupts();
+  // write values
+  Serial1.println("{");
+  Serial1.println("  \"type\":\"flow\",");
+  sprintf(buff, "  \"elapsed\":%i,", elapsed);
+  Serial1.println(buff);
+
+  sprintf(buff, "  \"flow1\":%i,", tmp1);
+  Serial1.println(buff);
+  sprintf(buff, "  \"flow2\":%i,", tmp2);
+  Serial1.println(buff);
+  sprintf(buff, "  \"flow3\":%i,", tmp3);
+  Serial1.println(buff);
+
+  Serial1.println("  \"error\":\"NONE\"");
+  Serial1.println("}");
+}
+
+/**
+ * The main modbus function
+ */
+void doModbus(int counter) {
+  uint32_t addr;
+  uint16_t registers[12];
+  uint32_t reg_size = sizeof(registers)/sizeof(uint16_t);
+
+  // set the modbus address to read
+  addr = counter%3;
+  // read the data from modbus
+  if (0 == readModbusRegisters(addr, registers, reg_size)) {
+    writeModbusXbee(addr, registers, reg_size);
+  }
+  else {
+    writeModbusXbeeErr(addr);
+  }
+}
+
+/**
+ * Write the modbus data to the XBee
+ */
+void writeModbusXbee(int addr, uint16_t *data, uint32_t data_size) {
+  uint8_t j;
+  char buff[256];
+  Serial1.println("{");
+  Serial1.println("  \"type\":\"power\",");
+  sprintf(buff, "  \"addr\":%i,", addr+1);
+  Serial1.println(buff);
+  for (j = 0; j < data_size; j++) {
+      sprintf(buff, "  \"%i\":%i,",40000+j+1, data[j]);
+      Serial1.println(buff);
+  }
+  Serial1.println("  \"error\":\"NONE\"");
+  Serial1.println("}");
+}
+/**
+ * Write the failure to the XBee
+ */
+void writeModbusXbeeErr(int addr) {
+  char buff[64];
+  Serial1.println("{");
+  Serial1.println("  \"type\":\"power\",");
+  sprintf(buff, "  \"addr\":%i,", addr+1);
+  Serial1.println(buff);
+  Serial1.println("  \"error\":\"COMMS ERROR\"");
+  Serial1.println("}");
+}
+
+/**
+ * Reads the modbus registers and fills the data array
+ */
+int readModbusRegisters(int addr, uint16_t *data, uint32_t data_size)
+{
+  uint8_t j, result;
+  // slave: read (12) 16-bit holding registers (0x03) starting at register 0 to RX buffer
+  result = node[addr].readHoldingRegisters(0, 12);
+  // do something with data if read is successful
+  if (result == node[addr].ku8MBSuccess) {
+    for (j = 0; j < data_size; j++)
+    {
+      data[j] = node[addr].getResponseBuffer(j);
+    }
+  }
+  else {
+    return -1;
+  }
+  return 0;
+}
