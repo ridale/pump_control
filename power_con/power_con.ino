@@ -16,6 +16,7 @@
  *
  */
 #include <ArduinoJson.h>
+#include "monitor.h"
 
 typedef struct myPin {
   int pin;
@@ -41,6 +42,27 @@ String inputCommand = "";
 bool commandComplete = false;
 // the delay between on/off in msecs
 const int PIN_DEADBAND = 5000;
+
+Monitor monitor(3,4,5);
+/**
+ * ISR for flow meter 2
+ */
+void accum1() {
+  monitor.flow1++;
+}
+/**
+ * ISR for flow meter 2
+ */
+void accum2() {
+  monitor.flow2++;
+}
+/**
+ * ISR for flow meter 3
+ */
+void accum3() {
+  monitor.flow3++;
+}
+
 /**
  * Init function run before loop started
  * sets up direction of IO pins and serial
@@ -58,6 +80,14 @@ void setup() {
     digitalWrite(pinPower[i].pin,LOW);
     pinPower[i].last_changed = now;
   }
+  // setup the digital inputs
+  pinMode(monitor.pinflow1, INPUT);
+  attachInterrupt(digitalPinToInterrupt(monitor.pinflow1), accum1, RISING);
+  pinMode(monitor.pinflow2, INPUT);
+  attachInterrupt(digitalPinToInterrupt(monitor.pinflow2), accum2, RISING);
+  pinMode(monitor.pinflow3, INPUT);
+  attachInterrupt(digitalPinToInterrupt(monitor.pinflow3), accum3, RISING);
+
 }
 /**
  * The main run loop. I am using the serialEvent thingie
@@ -87,7 +117,9 @@ void serialEvent1() {
   }
   // if we have no command incoming we can write out our status...
   if (inputCommand.length() == 0) {
-
+    monitor.index++;
+    monitor.doModbus();
+    monitor.doFlow();
   }
 }
 /**
