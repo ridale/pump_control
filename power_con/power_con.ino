@@ -1,12 +1,19 @@
 /**
  * This is the power control code, this code controls 2 digital outputs
- * controlling opto-isolated relays switching 240V motor loads for 
+ * controlling opto-isolated relays switching 240V motor loads for
  * pump control on the farm.
- * 
+ *
  * NOTE: We are keeping the state of the pins not checking them. We could
  *       use bitRead(PORTD, pin) or PORTB to get the digital pin states.
  *       Just seems over difficult...
- * 
+ *
+ * Commands:
+ * {"command":"config"}
+ * {"command":"status","pin":1}
+ * {"command":"toggle","pin":1}
+ * {"command":"on","pin":1}
+ * {"command":"off","pin":1}
+ *
  */
 #include <ArduinoJson.h>
 
@@ -16,15 +23,22 @@ typedef struct myPin {
   bool state;
 } pin_t;
 
-// The list of power pins in use
-pin_t pinPower[3] = { {2, 0, false},
-                      {3, 0, false},
-                      {4, 0, false} };
+/**
+ * @brief The list of power pins in use
+ *
+ * The following is the default pin layout for
+ * the DFRobotics relay board.
+ */
+pin_t pinPower[4] = { {2, 0, false},
+                      {7, 0, false},
+                      {8, 0, false},
+                      {10, 0, false}
+                    };
 
 // string to hold inputCommand
 String inputCommand = "";
 // the command has been read
-bool commandComplete = false; 
+bool commandComplete = false;
 // the delay between on/off in msecs
 const int PIN_DEADBAND = 5000;
 /**
@@ -34,18 +48,20 @@ const int PIN_DEADBAND = 5000;
  */
 void setup() {
   uint32_t now = millis();
+
   // Starting the other serial ports
   Serial1.begin(9600); // zigbee port
-  // setup the digital outputs
 
+  // setup the digital outputs
   for (int i = 0; i < sizeof(pinPower)/sizeof(pin_t); i++ ) {
     pinMode(pinPower[i].pin, OUTPUT);
+    digitalWrite(pinPower[i].pin,LOW);
     pinPower[i].last_changed = now;
   }
 }
 /**
  * The main run loop. I am using the serialEvent thingie
- * Means I should be running a read when data becomes 
+ * Means I should be running a read when data becomes
  * available, but it looks like voodoo to me.
  */
 void loop() {
@@ -68,11 +84,14 @@ void serialEvent1() {
     if (ch == '}') {
       commandComplete = true;
     }
-        
+  }
+  // if we have no command incoming we can write out our status...
+  if (inputCommand.length() == 0) {
+
   }
 }
 /**
- * Parse the JSON command packet and then do the 
+ * Parse the JSON command packet and then do the
  * required action.
  * \param command the JSON string with the command object
  */
@@ -101,7 +120,6 @@ void commandRespond(String command) {
     else if(cmdVal == String("on")) {
       // command on
      turnOn(root["pin"]);
-      
     }
     else if(cmdVal == String("off")) {
       // command off
@@ -122,7 +140,7 @@ void commandRespond(String command) {
       Serial1.println(" \"error\":\"Failed to parse command\"");
       Serial1.println("}");
     }
-  }  
+  }
 }
 /**
  * Writes the current status for the pin onto
@@ -147,7 +165,7 @@ void returnStatus(uint8_t pinIndex) {
     Serial1.println(buff);
     Serial1.println(" \"error\":\"NONE\"");
   }
-  Serial1.println("}");  
+  Serial1.println("}");
 }
 /**
  * Give some configuration info back
@@ -161,7 +179,7 @@ void returnConfig() {
   Serial1.println(buff);
   sprintf(buff, " \"deadband_ms\":%i", PIN_DEADBAND);
   Serial1.println(buff);
-  Serial1.println("}");   
+  Serial1.println("}");
 }
 /**
  * Get the interval in milliseconds since the output
@@ -175,7 +193,7 @@ uint32_t pinLastChanged(uint8_t pinIndex) {
   else {
     return now + (UINT32_MAX - pinPower[pinIndex].last_changed);
   }
-  
+
 }
 /**
  * Toggle the power state of the pin
@@ -223,14 +241,14 @@ void togglePower(uint8_t pinIndex) {
 }
 /**
  * Turn a pin on, uses toggle to do the work
- * write error to serial port if index out 
+ * write error to serial port if index out
  * of range or already on
  */
 void turnOn(uint8_t pinIndex) {
   uint32_t pins = sizeof(pinPower)/sizeof(pin_t);
   char buff[128];
   if (pinIndex >= pins) {
-    togglePower(pinIndex); // let them write our error    
+    togglePower(pinIndex); // let them write our error
   }
   else if (true == pinPower[pinIndex].state) {
     Serial1.println("{");
@@ -245,14 +263,14 @@ void turnOn(uint8_t pinIndex) {
 }
 /**
  * Turn a pin off, uses toggle to do the work
- * write error to serial port if index out 
+ * write error to serial port if index out
  * of range or already off
  */
 void turnOff(uint8_t pinIndex) {
   uint32_t pins = sizeof(pinPower)/sizeof(pin_t);
   char buff[128];
   if (pinIndex >= pins) {
-    togglePower(pinIndex); // let them write our error    
+    togglePower(pinIndex); // let them write our error
   }
   else if (false == pinPower[pinIndex].state) {
     Serial1.println("{");
