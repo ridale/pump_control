@@ -1,5 +1,5 @@
 # power meter
- The following notes are about the satec power meter modbus queries to get the power data out.
+The following notes are about the Satec power meter BFM136/036 modbus queries to get the power data out for publishing to an EmonCMS system.
 
 ## pymodbus
 The easiest way of doing this is to use pymodbus from what I can tell as we need to do modbus tcp on one side and post json to the webserver on the other side.
@@ -20,12 +20,12 @@ client = ModbusClient(svr_addr, port=502)
 client.connect()
 
 rr = client.read_holding_registers(46100, 6, unit=0x01)
-assert(rr.registers[0] == 1805)       # test the expected value
-assert(rr.registers[1] == 6)       # test the expected value
-assert(rr.registers[2] == 6101)       # test the expected value
-assert(rr.registers[3] == 8)       # test the expected value
-assert(rr.registers[4] == 102)       # test the expected value
-assert(rr.registers[5] == 2)       # test the expected value
+assert(rr.registers[0] == 1805) # test the expected value
+assert(rr.registers[1] == 6)    # test the expected value
+assert(rr.registers[2] == 6101) # test the expected value
+assert(rr.registers[3] == 8)    # test the expected value
+assert(rr.registers[4] == 102)  # test the expected value
+assert(rr.registers[5] == 2)    # test the expected value
 ```
 
 ## queries
